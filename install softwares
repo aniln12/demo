@@ -1,0 +1,74 @@
+########## Setup Variables for Script & Remove Spaces from text file ##########
+
+$WorkingDir = "\\fileshare\Apps\Adobe - Acrobat Pro - 12.0\Utils"
+$ListLocation = "\\fileshare\Apps\Adobe - Acrobat Pro - 12.0\utils\InstallList.txt"
+$Computers = Get-Content "\\fileshare\Apps\Adobe - Acrobat Pro - 12.0\utils\InstallList.txt"
+$Transcript = "\\fileshare\Apps\Adobe - Acrobat Pro - 12.0\utils\transcript.txt"
+
+########## Cleanup Text File with List of PCs ##########
+
+(Get-Content "\\fileshare\Apps\Oracle - Java - 8u131\utils\InstallList.txt") | Foreach {$_.TrimEnd()} | where {$_ -ne ""} | Set-Content "\\fileshare\Apps\Oracle - Java - 8u131\utils\InstallList.txt"
+
+
+########## Start Logging ##########
+
+Start-Transcript -path $Transcript -append
+
+
+########## Install Software On PCs ##########
+
+foreach ($Computer in $Computers) {
+
+Write-Host "Processing $Computer"
+
+    try{
+
+        New-Item -ItemType directory -Path "\\$Computer\c$\temp\Adobe12Install"
+        Copy-Item "\\fileshare\Apps\Adobe - Acrobat Pro - 12.0\AdobeProDC\*" "\\$Computer\c$\temp\Adobe12Install" -Recurse
+        Copy-Item "\\fileshare\Apps\Adobe - Acrobat Pro - 12.0\utils\KillAdobeProcess.cmd" "\\$Computer\c$\temp\Adobe12Install"
+
+        Invoke-Command -ComputerName $Computer -ScriptBlock {&cmd.exe /c "c:\temp\Adobe12Install\KillAdobeProcess.cmd"}
+        Write-Host " Installing AcrobatPro 12 on $Computer"
+        Invoke-Command -ComputerName $Computer -ScriptBlock {&cmd.exe /c MSIEXEC /I "c:\temp\Adobe12Install\AcroPro.msi" TRANSFORMS="c:\temp\Adobe12Install\AcroPro.mst" /qn}
+    } 
+}
+
+Stop-Transcript
+
+
+########## Wait 2 Minutes ##########
+
+Start-Sleep -Seconds 120
+
+########## Get Installed Adobe Software On PCs ##########
+
+foreach ($Computer in $Computers) {
+
+Write-Host "Checking $Computer for Installed Software"
+
+        $Result64 = Invoke-Command -cn $Computer -ScriptBlock {Get-ItemProperty HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\* -Exclude RunspaceId,PSShowComputerName } | 
+        select PSComputerName, DisplayName, Publisher, InstallDate | Sort DisplayName
+
+        $Result32 = Invoke-Command -cn $Computer -ScriptBlock {Get-ItemProperty HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\* -Exclude RunspaceId,PSShowComputerName } | 
+        select PSComputerName, DisplayName, Publisher, InstallDate | Sort DisplayName
+
+
+        $Result1 = $Result64 + $Result32
+        $Result2 = $Result1 | Where-Object {$_.DisplayName -like 'Adobe Acrobat DC' -or $_.DisplayName -like 'Adobe Acrobat' -or $_.DisplayName -like 'Adobe*'}
+        $FinalResults = $Result2 |  Export-Csv "$WorkingDir\FinalResults.csv" -NoTypeInformation -Append
+
+        $Result64=""
+        $Result32=""
+        $Result1=""  
+        $Result2=""  
+
+}
+
+########## Remove temporary files and folder on each PC ##########
+
+foreach ($Computer in $Computers) {
+    Write-Host "Removing Temporary files on $Computer"
+    $RemovalPath = "\\$Computer\c$\temp\Adobe12Install"
+    Get-ChildItem  -Path $RemovalPath -Recurse  | Remove-Item -Force -Recurse
+    Remove-Item $RemovalPath -Force -Recurse
+    }
